@@ -35,14 +35,20 @@ fn request_arxiv(client: &Client, id: &str) -> Result<Response, reqwest::Error> 
         .send()
 }
 
+fn format_doi(input: &str) -> String {
+    DOI_FMT
+        .replace_all(input.trim(), ",\n  $1")
+        .replace("}}", "}\n}")
+}
+
 fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) {
     if res.is_err() {
         Error::with_description("Failed to get bibtex information!", ErrorKind::InvalidValue);
     }
     let res = res.unwrap().text_with_charset("utf-8").unwrap();
     match idtype {
-        IdType::Doi => println!("{}", res),
-        IdType::Arxiv => println!("{:?}", res.parse::<Feed>().unwrap()),
+        IdType::Doi => println!("{}", format_doi(&res)),
+        IdType::Arxiv => println!("{:#?}", res.parse::<Feed>().unwrap()),
     }
 }
 
@@ -52,6 +58,7 @@ lazy_static! {
         .iter()
         .map(|re| Regex::new(re).unwrap())
         .collect();
+    pub static ref DOI_FMT: Regex = Regex::new(r",(\s?\w+=\{.+?\})").unwrap();
     pub static ref ARXIV_IDENT_RE: Regex = Regex::new(r"(?i)arxiv(?-i)(?::|.org)").unwrap();
     pub static ref ARXIV_RE: ArrayVec<Regex, 2> = [
         r"\d{4}\.\d{4,5}(?:v\d+)?",
