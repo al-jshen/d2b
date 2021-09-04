@@ -3,10 +3,15 @@ name = "d2b"
 version = "0.1.0"
 edition = "2018"
 
+authors = ["Jeff Shen <jshen2014@hotmail.com>"]
+description = "Command-line tool for generating bibtex from DOI or arXiv IDs."
+repository = "https://github.com/al-jshen/d2b"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 arrayvec = "0.7.1"
+atom_syndication = "0.10.0"
 clap = "2.33.3"
 lazy_static = "1.4.0"
 regex = "1.5.4"

@@ -1,4 +1,5 @@
 use arrayvec::ArrayVec;
+use atom_syndication::Feed;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Error, ErrorKind};
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -14,7 +15,7 @@ fn extract_id<'a, const N: usize>(re_arr: &ArrayVec<Regex, N>, pat: &'a str) -> 
         .map(|m| m.get(0).unwrap().as_str())
         .collect::<ArrayVec<_, 1>>();
     if m.len() == 0 {
-        Error::with_description("Invalid arXiv ID!", ErrorKind::ValueValidation).exit();
+        Error::with_description("Invalid DOI or arXiv ID!", ErrorKind::ValueValidation).exit();
     }
     let id = m.get(0).unwrap().trim_end_matches("/");
     id
@@ -34,12 +35,15 @@ fn request_arxiv(client: &Client, id: &str) -> Result<Response, reqwest::Error> 
         .send()
 }
 
-fn handle_response(res: Result<Response, reqwest::Error>) {
+fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) {
     if res.is_err() {
-        Error::with_description("Failed to get DOI information!", ErrorKind::InvalidValue);
+        Error::with_description("Failed to get bibtex information!", ErrorKind::InvalidValue);
     }
-    let res = res.unwrap();
-    println!("{:#?}", res.text_with_charset("utf-8"));
+    let res = res.unwrap().text_with_charset("utf-8").unwrap();
+    match idtype {
+        IdType::Doi => println!("{}", res),
+        IdType::Arxiv => println!("{:?}", res.parse::<Feed>().unwrap()),
+    }
 }
 
 lazy_static! {
@@ -58,6 +62,11 @@ lazy_static! {
     .collect();
 }
 
+enum IdType {
+    Doi,
+    Arxiv,
+}
+
 fn main() {
     let matches = clap::App::new(crate_name!())
         .version(crate_version!())
@@ -65,30 +74,45 @@ fn main() {
         .about(crate_description!())
         .arg(
             Arg::with_name("input")
-                .help("DOI to search for")
+                .help("DOI(s) or arXiv identifier(s) to search for, separated by spaces.")
                 .required(true)
-                .index(1),
+                .index(1)
+                .min_values(1),
         )
         .get_matches();
 
     let client = Client::new();
 
-    if let Some(pat) = matches.value_of("input") {
-        if DOI_IDENT_RE.is_match(&pat) || DOI_RE.iter().any(|re| re.is_match(&pat)) {
-            let id = extract_id(&DOI_RE, pat);
-            println!("DOI matched: {}", id);
-            let res = request_doi(&client, id);
-        } else if ARXIV_IDENT_RE.is_match(&pat) || ARXIV_RE.iter().any(|re| re.is_match(&pat)) {
-            let id = extract_id(&ARXIV_RE, pat);
-            println!("arXiv ID matched: {}", id);
-            let res = request_arxiv(&client, id);
-        } else {
-            Error::with_description(
-                "Please enter a valid DOI or arXiv ID!",
-                ErrorKind::InvalidValue,
-            )
-            .exit();
-        }
+    let pats = if let Some(pats) = matches.values_of("input") {
+        pats.collect::<Vec<_>>()
+    } else {
+        Error::with_description("Missing arguments!", ErrorKind::MissingRequiredArgument).exit();
+    };
+
+    for pat in pats {
+        let (id, idtype) =
+            if DOI_IDENT_RE.is_match(&pat) || DOI_RE.iter().any(|re| re.is_match(&pat)) {
+                (extract_id(&DOI_RE, pat), IdType::Doi)
+            } else if ARXIV_IDENT_RE.is_match(&pat) || ARXIV_RE.iter().any(|re| re.is_match(&pat)) {
+                (extract_id(&ARXIV_RE, pat), IdType::Arxiv)
+            } else {
+                Error::with_description(
+                    "Please enter a valid DOI or arXiv ID!",
+                    ErrorKind::InvalidValue,
+                )
+                .exit();
+            };
+        let res = match idtype {
+            IdType::Doi => {
+                println!("matched DOI: {}", id);
+                request_doi(&client, id)
+            }
+            IdType::Arxiv => {
+                println!("matched arXiv ID: {}", id);
+                request_arxiv(&client, id)
+            }
+        };
+        handle_response(res, idtype);
     }
 }
 
