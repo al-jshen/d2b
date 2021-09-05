@@ -6,6 +6,9 @@ edition = "2018"
 authors = ["Jeff Shen <jshen2014@hotmail.com>"]
 description = "Command-line tool for generating bibtex from DOI or arXiv IDs."
 repository = "https://github.com/al-jshen/d2b"
+license = "MIT"
+
+categories = ["cli"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
