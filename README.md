@@ -2,9 +2,9 @@
 
 Command-line tool for generating bibtex from DOIs and arXiv IDs.
 
-## Installation 
+## Installation
 
-``` bash
+```bash
 cargo install d2b
 ```
 
@@ -28,7 +28,7 @@ Multiple identifiers:
 > d2b 2105.11572 10.1145/359327.359336
 ```
 
-Identifiers are queried asynchronously. The resulting bibtex is returned in the order of input.
+Identifiers are queried asynchronously. Duplicates are removed.
 
 ## Example formats:
 

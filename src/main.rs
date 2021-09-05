@@ -24,7 +24,7 @@ fn extract_id<const N: usize>(re_arr: &ArrayVec<Regex, N>, pat: &str) -> String 
     id
 }
 
-async fn request_info(id: String, idtype: IdType) -> Result<Response, reqwest::Error> {
+async fn request_info(id: &str, idtype: IdType) -> Result<Response, reqwest::Error> {
     // println!("Making request to {}", &format!("https://doi.org/{}", id));
     match idtype {
         IdType::Doi => {
@@ -66,7 +66,7 @@ async fn print_arxiv(input: &Feed) -> String {
     let arxiv_extension = extensions.get("arxiv").unwrap();
     if arxiv_extension.contains_key("doi") {
         let doi = arxiv_extension.get("doi").unwrap()[0].value().unwrap();
-        let res = request_info(doi.to_owned(), IdType::Doi).await;
+        let res = request_info(doi, IdType::Doi).await;
         return handle_response(res, IdType::Doi).await;
     }
 
@@ -163,7 +163,7 @@ async fn get_bibtex(pat: String) -> String {
                 )
                 .exit();
             };
-        let res = request_info(id, idtype).await;
+        let res = request_info(&id, idtype).await;
         handle_response(res, idtype).await
     })
     .await
@@ -186,7 +186,12 @@ async fn main() {
         .get_matches();
 
     let pats = if let Some(pats) = matches.values_of("input") {
-        pats.map(|x| x.to_owned()).collect::<Vec<String>>()
+        let mut pats = pats.collect::<Vec<_>>();
+        pats.sort();
+        pats.dedup();
+        pats.into_iter()
+            .map(|x| x.to_owned())
+            .collect::<Vec<String>>()
     } else {
         Error::with_description("Missing arguments!", ErrorKind::MissingRequiredArgument).exit();
     };
