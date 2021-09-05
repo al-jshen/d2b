@@ -23,7 +23,7 @@ fn extract_id<'a, const N: usize>(re_arr: &ArrayVec<Regex, N>, pat: &'a str) -> 
 }
 
 fn request_doi(id: &str) -> Result<Response, reqwest::Error> {
-    println!("Making request to {}", &format!("https://doi.org/{}", id));
+    // println!("Making request to {}", &format!("https://doi.org/{}", id));
     CLIENT
         .get(&format!("https://doi.org/{}", id))
         .header(ACCEPT, "text/bibliography; style=bibtex")
@@ -36,16 +36,13 @@ fn request_arxiv(id: &str) -> Result<Response, reqwest::Error> {
         .send()
 }
 
-fn print_doi(input: &str) {
-    println!(
-        "{}",
-        DOI_FMT
-            .replace_all(input.trim(), ",\n  $1")
-            .replace("}}", "}\n}")
-    );
+fn print_doi(input: &str) -> String {
+    DOI_FMT
+        .replace_all(input.trim(), ",\n  $1")
+        .replace("}}", "}\n}")
 }
 
-fn print_arxiv(input: &Feed) {
+fn print_arxiv(input: &Feed) -> String {
     let entry = &input.entries()[0];
 
     let extensions = entry.extensions();
@@ -55,7 +52,7 @@ fn print_arxiv(input: &Feed) {
     if arxiv_extension.contains_key("doi") {
         let doi = arxiv_extension.get("doi").unwrap()[0].value().unwrap();
         let res = request_doi(doi);
-        handle_response(res, IdType::Doi);
+        return handle_response(res, IdType::Doi);
     }
 
     let mut firstauth = "".to_owned();
@@ -95,14 +92,17 @@ fn print_arxiv(input: &Feed) {
         key, title, authors, year, id, class
     );
 
-    print_doi(&formatted);
+    print_doi(&formatted)
 }
 
-fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) {
+fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) -> String {
     if res.is_err() {
-        Error::with_description("Failed to get bibtex information!", ErrorKind::InvalidValue);
+        Error::with_description("Invalid DOI or arXiv ID!", ErrorKind::InvalidValue).exit();
     }
     let res = res.unwrap().text_with_charset("utf-8").unwrap();
+    if res.contains("cannot be found") {
+        Error::with_description("Invalid DOI!", ErrorKind::InvalidValue).exit();
+    }
     match idtype {
         IdType::Doi => print_doi(&res),
         IdType::Arxiv => print_arxiv(&res.parse::<Feed>().unwrap()),
@@ -167,15 +167,15 @@ fn main() {
             };
         let res = match idtype {
             IdType::Doi => {
-                println!("matched DOI: {}", id);
+                // println!("matched DOI: {}", id);
                 request_doi(id)
             }
             IdType::Arxiv => {
-                println!("matched arXiv ID: {}", id);
+                // println!("matched arXiv ID: {}", id);
                 request_arxiv(id)
             }
         };
-        handle_response(res, idtype);
+        println!("{}", handle_response(res, idtype));
     }
 }
 
