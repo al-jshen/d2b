@@ -44,7 +44,7 @@ fn print_doi(input: &str) -> String {
 
 fn print_arxiv(input: &Feed) -> String {
     if input.entries().is_empty() {
-        Error::with_description("Invalid arXiv ID!", ErrorKind::InvalidValue).exit();
+        Error::with_description("Invalid DOI or arXiv ID!", ErrorKind::InvalidValue).exit();
     }
 
     let entry = &input.entries()[0];
@@ -52,7 +52,7 @@ fn print_arxiv(input: &Feed) -> String {
     let extensions = entry.extensions();
 
     if entry.authors().is_empty() || entry.published().is_none() || entry.id().len() == 0 {
-        Error::with_description("Invalid arXiv ID!", ErrorKind::InvalidValue).exit();
+        Error::with_description("Invalid DOI or arXiv ID!", ErrorKind::InvalidValue).exit();
     }
 
     assert!(extensions.contains_key("arxiv"));
@@ -109,7 +109,7 @@ fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) -> Str
     }
     let res = res.unwrap().text_with_charset("utf-8").unwrap();
     if res.contains("cannot be found") {
-        Error::with_description("Invalid DOI!", ErrorKind::InvalidValue).exit();
+        Error::with_description("Invalid DOI or arXiv ID!", ErrorKind::InvalidValue).exit();
     }
     match idtype {
         IdType::Doi => print_doi(&res),
