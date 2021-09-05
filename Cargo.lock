@@ -142,6 +142,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "atom_syndication",
+ "chrono",
  "clap",
  "lazy_static",
  "regex",

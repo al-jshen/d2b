@@ -1,5 +1,6 @@
 use arrayvec::ArrayVec;
 use atom_syndication::Feed;
+use chrono::Datelike;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Error, ErrorKind};
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -21,24 +22,80 @@ fn extract_id<'a, const N: usize>(re_arr: &ArrayVec<Regex, N>, pat: &'a str) -> 
     id
 }
 
-fn request_doi(client: &Client, id: &str) -> Result<Response, reqwest::Error> {
+fn request_doi(id: &str) -> Result<Response, reqwest::Error> {
     println!("Making request to {}", &format!("https://doi.org/{}", id));
-    client
+    CLIENT
         .get(&format!("https://doi.org/{}", id))
         .header(ACCEPT, "text/bibliography; style=bibtex")
         .send()
 }
 
-fn request_arxiv(client: &Client, id: &str) -> Result<Response, reqwest::Error> {
-    client
+fn request_arxiv(id: &str) -> Result<Response, reqwest::Error> {
+    CLIENT
         .get(&format!("http://export.arxiv.org/api/query?id_list={}", id))
         .send()
 }
 
-fn format_doi(input: &str) -> String {
-    DOI_FMT
-        .replace_all(input.trim(), ",\n  $1")
-        .replace("}}", "}\n}")
+fn print_doi(input: &str) {
+    println!(
+        "{}",
+        DOI_FMT
+            .replace_all(input.trim(), ",\n  $1")
+            .replace("}}", "}\n}")
+    );
+}
+
+fn print_arxiv(input: &Feed) {
+    let entry = &input.entries()[0];
+
+    let extensions = entry.extensions();
+
+    assert!(extensions.contains_key("arxiv"));
+    let arxiv_extension = extensions.get("arxiv").unwrap();
+    if arxiv_extension.contains_key("doi") {
+        let doi = arxiv_extension.get("doi").unwrap()[0].value().unwrap();
+        let res = request_doi(doi);
+        handle_response(res, IdType::Doi);
+    }
+
+    let mut firstauth = "".to_owned();
+
+    let mut authors = "".to_owned();
+    for (i, a) in entry.authors().iter().enumerate() {
+        let name_vec = a.name().split_whitespace().collect::<Vec<_>>();
+        assert!(!name_vec.is_empty());
+        let n = name_vec.len();
+        if i == 0 {
+            firstauth = name_vec[n - 1].to_owned();
+        }
+        let ending = if i != entry.authors().len() - 1 {
+            " and "
+        } else {
+            ""
+        };
+        authors.push_str(&format!(
+            "{}, {}{}",
+            name_vec[n - 1],
+            name_vec[..n - 1].join(" "),
+            ending
+        ));
+    }
+
+    let categories = &entry.categories;
+    assert!(!categories.is_empty());
+    let class = categories[0].term();
+
+    let year = entry.published().unwrap().year().to_string();
+    let key = format!("{}_{}", firstauth, year);
+    let title = format!("{}", &entry.title.as_str().replace("\n ", ""));
+    let id = extract_id(&ARXIV_RE, entry.id());
+
+    let formatted = format!(
+        "@article{{{},title={{{}}},author={{{}}},year={{{}}},eprint={{{}}},archivePrefix={{arXiv}},primaryClass={{{}}}}}",
+        key, title, authors, year, id, class
+    );
+
+    print_doi(&formatted);
 }
 
 fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) {
@@ -47,8 +104,8 @@ fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) {
     }
     let res = res.unwrap().text_with_charset("utf-8").unwrap();
     match idtype {
-        IdType::Doi => println!("{}", format_doi(&res)),
-        IdType::Arxiv => println!("{:#?}", res.parse::<Feed>().unwrap()),
+        IdType::Doi => print_doi(&res),
+        IdType::Arxiv => print_arxiv(&res.parse::<Feed>().unwrap()),
     }
 }
 
@@ -67,6 +124,7 @@ lazy_static! {
     .iter()
     .map(|re| Regex::new(re).unwrap())
     .collect();
+    pub static ref CLIENT: Client = Client::new();
 }
 
 enum IdType {
@@ -87,8 +145,6 @@ fn main() {
                 .min_values(1),
         )
         .get_matches();
-
-    let client = Client::new();
 
     let pats = if let Some(pats) = matches.values_of("input") {
         pats.collect::<Vec<_>>()
@@ -112,11 +168,11 @@ fn main() {
         let res = match idtype {
             IdType::Doi => {
                 println!("matched DOI: {}", id);
-                request_doi(&client, id)
+                request_doi(id)
             }
             IdType::Arxiv => {
                 println!("matched arXiv ID: {}", id);
-                request_arxiv(&client, id)
+                request_arxiv(id)
             }
         };
         handle_response(res, idtype);

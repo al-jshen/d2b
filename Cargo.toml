@@ -12,6 +12,7 @@ repository = "https://github.com/al-jshen/d2b"
 [dependencies]
 arrayvec = "0.7.1"
 atom_syndication = "0.10.0"
+chrono = "0.4.19"
 clap = "2.33.3"
 lazy_static = "1.4.0"
 regex = "1.5.4"
