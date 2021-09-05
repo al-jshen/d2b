@@ -43,9 +43,17 @@ fn print_doi(input: &str) -> String {
 }
 
 fn print_arxiv(input: &Feed) -> String {
+    if input.entries().is_empty() {
+        Error::with_description("Invalid arXiv ID!", ErrorKind::InvalidValue).exit();
+    }
+
     let entry = &input.entries()[0];
 
     let extensions = entry.extensions();
+
+    if entry.authors().is_empty() || entry.published().is_none() || entry.id().len() == 0 {
+        Error::with_description("Invalid arXiv ID!", ErrorKind::InvalidValue).exit();
+    }
 
     assert!(extensions.contains_key("arxiv"));
     let arxiv_extension = extensions.get("arxiv").unwrap();
