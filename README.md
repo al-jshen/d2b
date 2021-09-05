@@ -2,6 +2,12 @@
 
 Command-line tool for generating bibtex from DOIs and arXiv IDs.
 
+## Installation 
+
+``` bash
+cargo install d2b
+```
+
 ## Examples
 
 arXiv identifiers:
