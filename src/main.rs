@@ -1,15 +1,17 @@
 use arrayvec::ArrayVec;
+use async_recursion::async_recursion;
 use atom_syndication::Feed;
 use chrono::Datelike;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Error, ErrorKind};
+use futures::future::join_all;
 use lazy_static::lazy_static;
 use regex::Regex;
 use reqwest::{
-    blocking::{Client, Response},
     header::ACCEPT,
+    {Client, Response},
 };
 
-fn extract_id<'a, const N: usize>(re_arr: &ArrayVec<Regex, N>, pat: &'a str) -> &'a str {
+fn extract_id<const N: usize>(re_arr: &ArrayVec<Regex, N>, pat: &str) -> String {
     let m = re_arr
         .iter()
         .filter_map(|re| re.captures(&pat))
@@ -18,22 +20,27 @@ fn extract_id<'a, const N: usize>(re_arr: &ArrayVec<Regex, N>, pat: &'a str) -> 
     if m.len() == 0 {
         Error::with_description("Invalid DOI or arXiv ID!", ErrorKind::ValueValidation).exit();
     }
-    let id = m.get(0).unwrap().trim_end_matches("/");
+    let id = m.get(0).unwrap().trim_end_matches("/").to_owned();
     id
 }
 
-fn request_doi(id: &str) -> Result<Response, reqwest::Error> {
+async fn request_info(id: String, idtype: IdType) -> Result<Response, reqwest::Error> {
     // println!("Making request to {}", &format!("https://doi.org/{}", id));
-    CLIENT
-        .get(&format!("https://doi.org/{}", id))
-        .header(ACCEPT, "text/bibliography; style=bibtex")
-        .send()
-}
-
-fn request_arxiv(id: &str) -> Result<Response, reqwest::Error> {
-    CLIENT
-        .get(&format!("http://export.arxiv.org/api/query?id_list={}", id))
-        .send()
+    match idtype {
+        IdType::Doi => {
+            CLIENT
+                .get(&format!("https://doi.org/{}", id))
+                .header(ACCEPT, "text/bibliography; style=bibtex")
+                .send()
+                .await
+        }
+        IdType::Arxiv => {
+            CLIENT
+                .get(&format!("http://export.arxiv.org/api/query?id_list={}", id))
+                .send()
+                .await
+        }
+    }
 }
 
 fn print_doi(input: &str) -> String {
@@ -42,7 +49,7 @@ fn print_doi(input: &str) -> String {
         .replace("}}", "}\n}")
 }
 
-fn print_arxiv(input: &Feed) -> String {
+async fn print_arxiv(input: &Feed) -> String {
     if input.entries().is_empty() {
         Error::with_description("Invalid DOI or arXiv ID!", ErrorKind::InvalidValue).exit();
     }
@@ -59,8 +66,8 @@ fn print_arxiv(input: &Feed) -> String {
     let arxiv_extension = extensions.get("arxiv").unwrap();
     if arxiv_extension.contains_key("doi") {
         let doi = arxiv_extension.get("doi").unwrap()[0].value().unwrap();
-        let res = request_doi(doi);
-        return handle_response(res, IdType::Doi);
+        let res = request_info(doi.to_owned(), IdType::Doi).await;
+        return handle_response(res, IdType::Doi).await;
     }
 
     let mut firstauth = "".to_owned();
@@ -103,17 +110,18 @@ fn print_arxiv(input: &Feed) -> String {
     print_doi(&formatted)
 }
 
-fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) -> String {
+#[async_recursion]
+async fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) -> String {
     if res.is_err() {
         Error::with_description("Invalid DOI or arXiv ID!", ErrorKind::InvalidValue).exit();
     }
-    let res = res.unwrap().text_with_charset("utf-8").unwrap();
+    let res = res.unwrap().text_with_charset("utf-8").await.unwrap();
     if res.contains("cannot be found") {
         Error::with_description("Invalid DOI or arXiv ID!", ErrorKind::InvalidValue).exit();
     }
     match idtype {
         IdType::Doi => print_doi(&res),
-        IdType::Arxiv => print_arxiv(&res.parse::<Feed>().unwrap()),
+        IdType::Arxiv => print_arxiv(&res.parse::<Feed>().unwrap()).await,
     }
 }
 
@@ -135,12 +143,35 @@ lazy_static! {
     pub static ref CLIENT: Client = Client::new();
 }
 
+#[derive(Debug, Clone, Copy)]
 enum IdType {
     Doi,
     Arxiv,
 }
 
-fn main() {
+async fn get_bibtex(pat: String) -> String {
+    tokio::spawn(async move {
+        let (id, idtype) =
+            if DOI_IDENT_RE.is_match(&pat) || DOI_RE.iter().any(|re| re.is_match(&pat)) {
+                (extract_id(&DOI_RE, &pat), IdType::Doi)
+            } else if ARXIV_IDENT_RE.is_match(&pat) || ARXIV_RE.iter().any(|re| re.is_match(&pat)) {
+                (extract_id(&ARXIV_RE, &pat), IdType::Arxiv)
+            } else {
+                Error::with_description(
+                    "Please enter a valid DOI or arXiv ID!",
+                    ErrorKind::InvalidValue,
+                )
+                .exit();
+            };
+        let res = request_info(id, idtype).await;
+        handle_response(res, idtype).await
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::main]
+async fn main() {
     let matches = clap::App::new(crate_name!())
         .version(crate_version!())
         .author(crate_authors!())
@@ -155,35 +186,16 @@ fn main() {
         .get_matches();
 
     let pats = if let Some(pats) = matches.values_of("input") {
-        pats.collect::<Vec<_>>()
+        pats.map(|x| x.to_owned()).collect::<Vec<String>>()
     } else {
         Error::with_description("Missing arguments!", ErrorKind::MissingRequiredArgument).exit();
     };
 
-    for pat in pats {
-        let (id, idtype) =
-            if DOI_IDENT_RE.is_match(&pat) || DOI_RE.iter().any(|re| re.is_match(&pat)) {
-                (extract_id(&DOI_RE, pat), IdType::Doi)
-            } else if ARXIV_IDENT_RE.is_match(&pat) || ARXIV_RE.iter().any(|re| re.is_match(&pat)) {
-                (extract_id(&ARXIV_RE, pat), IdType::Arxiv)
-            } else {
-                Error::with_description(
-                    "Please enter a valid DOI or arXiv ID!",
-                    ErrorKind::InvalidValue,
-                )
-                .exit();
-            };
-        let res = match idtype {
-            IdType::Doi => {
-                // println!("matched DOI: {}", id);
-                request_doi(id)
-            }
-            IdType::Arxiv => {
-                // println!("matched arXiv ID: {}", id);
-                request_arxiv(id)
-            }
-        };
-        println!("{}", handle_response(res, idtype));
+    let futures = pats.into_iter().map(|p| get_bibtex(p)).collect::<Vec<_>>();
+    let results = join_all(futures).await;
+
+    for r in results {
+        println!("{}", r);
     }
 }
 

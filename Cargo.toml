@@ -1,6 +1,6 @@
 [package]
 name = "d2b"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2018"
 
 authors = ["Jeff Shen <jshen2014@hotmail.com>"]
@@ -14,9 +14,12 @@ categories = ["cli"]
 
 [dependencies]
 arrayvec = "0.7.1"
+async-recursion = "0.3.2"
 atom_syndication = "0.10.0"
 chrono = "0.4.19"
 clap = "2.33.3"
+futures = "0.3.17"
 lazy_static = "1.4.0"
 regex = "1.5.4"
-reqwest = { version = "0.11.4", features = ["blocking", "json"] }
+reqwest = "0.11.4" 
+tokio = { version = "1.11.0", features = ["full"] }
