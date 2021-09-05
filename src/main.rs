@@ -3,7 +3,7 @@ use async_recursion::async_recursion;
 use atom_syndication::Feed;
 use chrono::Datelike;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Error, ErrorKind};
-use futures::future::join_all;
+use futures::{stream::FuturesUnordered, StreamExt};
 use lazy_static::lazy_static;
 use regex::Regex;
 use reqwest::{
@@ -196,11 +196,13 @@ async fn main() {
         Error::with_description("Missing arguments!", ErrorKind::MissingRequiredArgument).exit();
     };
 
-    let futures = pats.into_iter().map(|p| get_bibtex(p)).collect::<Vec<_>>();
-    let results = join_all(futures).await;
+    let mut futures = pats
+        .into_iter()
+        .map(|p| get_bibtex(p))
+        .collect::<FuturesUnordered<_>>();
 
-    for r in results {
-        println!("{}", r);
+    while let Some(val) = futures.next().await {
+        println!("{}", val);
     }
 }
 
