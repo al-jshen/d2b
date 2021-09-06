@@ -4,12 +4,97 @@ use atom_syndication::Feed;
 use chrono::Datelike;
 use clap::{crate_authors, crate_description, crate_name, crate_version, Arg, Error, ErrorKind};
 use futures::{stream::FuturesUnordered, StreamExt};
+use indicatif::ProgressBar;
 use lazy_static::lazy_static;
 use regex::Regex;
 use reqwest::{
     header::ACCEPT,
     {Client, Response},
 };
+use std::io::{BufRead, BufReader};
+
+#[tokio::main]
+async fn main() {
+    let matches = clap::App::new(crate_name!())
+        .version(crate_version!())
+        .author(crate_authors!())
+        .about(crate_description!())
+        .arg(
+            Arg::with_name("file")
+                .short("f")
+                .long("file")
+                .help("Read DOIs or arXiv identifiers from a file (one per line).")
+                .takes_value(true)
+                .conflicts_with("input"),
+        )
+        .arg(
+            Arg::with_name("input")
+                .help("DOI(s) or arXiv identifier(s) to search for, separated by spaces.")
+                .conflicts_with("file")
+                .index(1)
+                .min_values(1),
+        )
+        .get_matches();
+
+    let pats = if let Some(pats) = matches.values_of("input") {
+        let mut pats = pats.collect::<Vec<_>>();
+        pats.sort();
+        pats.dedup();
+        pats.into_iter()
+            .map(|x| x.to_owned())
+            .collect::<Vec<String>>()
+    } else if let Some(filename) = matches.value_of("file") {
+        read_file(filename)
+    } else {
+        Error::with_description("Missing arguments!", ErrorKind::MissingRequiredArgument).exit();
+    };
+
+    let bar = ProgressBar::new(pats.len() as u64);
+
+    let mut futures = pats
+        .into_iter()
+        .map(|p| get_bibtex(p))
+        .collect::<FuturesUnordered<_>>();
+
+    while let Some(val) = futures.next().await {
+        bar.inc(1);
+        bar.println(val);
+    }
+
+    bar.finish_and_clear();
+}
+
+lazy_static! {
+    pub static ref DOI_IDENT_RE: Regex = Regex::new(r"doi(?::|.org)").unwrap();
+    pub static ref DOI_RE: ArrayVec<Regex, 2> = [r"10.\d{4,9}/[-\._;()/:\w\d]+", r"10.1002/[^\s]+"]
+        .iter()
+        .map(|re| Regex::new(re).unwrap())
+        .collect();
+    pub static ref DOI_FMT: Regex = Regex::new(r",(\s?\w+=\{.+?\})").unwrap();
+    pub static ref ARXIV_IDENT_RE: Regex = Regex::new(r"(?i)arxiv(?-i)(?::|.org)").unwrap();
+    pub static ref ARXIV_RE: ArrayVec<Regex, 2> = [
+        r"\d{4}\.\d{4,5}(?:v\d+)?",
+        r"[a-z]+(?:-[a-z]+)?/\d{7}(?:v\d+)?",
+    ]
+    .iter()
+    .map(|re| Regex::new(re).unwrap())
+    .collect();
+    pub static ref CLIENT: Client = Client::new();
+}
+
+#[derive(Debug, Clone, Copy)]
+enum IdType {
+    Doi,
+    Arxiv,
+}
+
+fn read_file(filename: &str) -> Vec<String> {
+    let file = std::fs::File::open(filename).expect("Could not read file!");
+    let buf = BufReader::new(file);
+    buf.lines()
+        .map(|l| l.expect("Could not parse line in file!"))
+        .collect()
+}
 
 fn extract_id<const N: usize>(re_arr: &ArrayVec<Regex, N>, pat: &str) -> String {
     let m = re_arr
@@ -125,30 +210,6 @@ async fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) 
     }
 }
 
-lazy_static! {
-    pub static ref DOI_IDENT_RE: Regex = Regex::new(r"doi(?::|.org)").unwrap();
-    pub static ref DOI_RE: ArrayVec<Regex, 2> = [r"10.\d{4,9}/[-\._;()/:\w\d]+", r"10.1002/[^\s]+"]
-        .iter()
-        .map(|re| Regex::new(re).unwrap())
-        .collect();
-    pub static ref DOI_FMT: Regex = Regex::new(r",(\s?\w+=\{.+?\})").unwrap();
-    pub static ref ARXIV_IDENT_RE: Regex = Regex::new(r"(?i)arxiv(?-i)(?::|.org)").unwrap();
-    pub static ref ARXIV_RE: ArrayVec<Regex, 2> = [
-        r"\d{4}\.\d{4,5}(?:v\d+)?",
-        r"[a-z]+(?:-[a-z]+)?/\d{7}(?:v\d+)?",
-    ]
-    .iter()
-    .map(|re| Regex::new(re).unwrap())
-    .collect();
-    pub static ref CLIENT: Client = Client::new();
-}
-
-#[derive(Debug, Clone, Copy)]
-enum IdType {
-    Doi,
-    Arxiv,
-}
-
 async fn get_bibtex(pat: String) -> String {
     tokio::spawn(async move {
         let (id, idtype) =
@@ -168,42 +229,6 @@ async fn get_bibtex(pat: String) -> String {
     })
     .await
     .unwrap()
-}
-
-#[tokio::main]
-async fn main() {
-    let matches = clap::App::new(crate_name!())
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about(crate_description!())
-        .arg(
-            Arg::with_name("input")
-                .help("DOI(s) or arXiv identifier(s) to search for, separated by spaces.")
-                .required(true)
-                .index(1)
-                .min_values(1),
-        )
-        .get_matches();
-
-    let pats = if let Some(pats) = matches.values_of("input") {
-        let mut pats = pats.collect::<Vec<_>>();
-        pats.sort();
-        pats.dedup();
-        pats.into_iter()
-            .map(|x| x.to_owned())
-            .collect::<Vec<String>>()
-    } else {
-        Error::with_description("Missing arguments!", ErrorKind::MissingRequiredArgument).exit();
-    };
-
-    let mut futures = pats
-        .into_iter()
-        .map(|p| get_bibtex(p))
-        .collect::<FuturesUnordered<_>>();
-
-    while let Some(val) = futures.next().await {
-        println!("{}", val);
-    }
 }
 
 #[cfg(test)]
