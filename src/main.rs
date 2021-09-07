@@ -34,6 +34,12 @@ async fn main() {
                 .index(1)
                 .min_values(1),
         )
+        .arg(
+            Arg::with_name("escape")
+                .short("e")
+                .long("escape")
+                .help("Escapes the \"&\" (ampersand) character."),
+        )
         .get_matches();
 
     let pats = if let Some(pats) = matches.values_of("input") {
@@ -53,7 +59,7 @@ async fn main() {
 
     let mut futures = pats
         .into_iter()
-        .map(|p| get_bibtex(p))
+        .map(|p| get_bibtex(p, matches.is_present("escape")))
         .collect::<FuturesUnordered<_>>();
 
     while let Some(val) = futures.next().await {
@@ -210,7 +216,7 @@ async fn handle_response(res: Result<Response, reqwest::Error>, idtype: IdType) 
     }
 }
 
-async fn get_bibtex(pat: String) -> String {
+async fn get_bibtex(pat: String, escape: bool) -> String {
     tokio::spawn(async move {
         let (id, idtype) =
             if DOI_IDENT_RE.is_match(&pat) || DOI_RE.iter().any(|re| re.is_match(&pat)) {
@@ -225,7 +231,11 @@ async fn get_bibtex(pat: String) -> String {
                 .exit();
             };
         let res = request_info(&id, idtype).await;
-        handle_response(res, idtype).await
+        if escape {
+            handle_response(res, idtype).await.replace("&", "\\&")
+        } else {
+            handle_response(res, idtype).await
+        }
     })
     .await
     .unwrap()
